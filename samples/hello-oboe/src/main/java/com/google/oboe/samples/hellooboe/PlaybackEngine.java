@@ -25,28 +25,11 @@ public class PlaybackEngine {
         System.loadLibrary("hello-oboe");
     }
 
-    static void setDefaultStreamValues(Context context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1){
-            AudioManager myAudioMgr = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
-            String sampleRateStr = myAudioMgr.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE);
-            int defaultSampleRate = Integer.parseInt(sampleRateStr);
-            String framesPerBurstStr = myAudioMgr.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER);
-            int defaultFramesPerBurst = Integer.parseInt(framesPerBurstStr);
-
-            setDefaultStreamValues(defaultSampleRate, defaultFramesPerBurst);
-        }
-    }
-
 
     // Native methods that require audioserver calls and might take several seconds.
-    static native int startEngine(int audioApi, int deviceId, int channelCount);
+    static native int startEngine(int outputDeviceId, int inputDeviceId);
     static native int stopEngine();
 
     // Native methods that only talk to the native client code.
-    static native void setToneOn(boolean isToneOn);
-    static native void setBufferSizeInBursts(int bufferSizeInBursts);
-    static native double getCurrentOutputLatencyMillis();
-    static native boolean isLatencyDetectionSupported();
-    static native boolean isAAudioRecommended();
-    static native void setDefaultStreamValues(int sampleRate, int framesPerBurst);
+    static native void runLoopbackTest();
 }

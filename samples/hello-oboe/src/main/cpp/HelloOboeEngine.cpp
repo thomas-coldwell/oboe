@@ -17,159 +17,137 @@
 
 #include <inttypes.h>
 #include <memory>
-
-#include <Oscillator.h>
+#include <thread>
+#include <chrono>
+#include <android/log.h>
 
 #include "HelloOboeEngine.h"
-#include "SoundGenerator.h"
 
-
-/**
- * Main audio engine for the HelloOboe sample. It is responsible for:
- *
- * - Creating a callback object which is supplied when constructing the audio stream, and will be
- * called when the stream starts
- * - Restarting the stream when user-controllable properties (Audio API, channel count etc) are
- * changed, and when the stream is disconnected (e.g. when headphones are attached)
- * - Calculating the audio latency of the stream
- *
- */
-HelloOboeEngine::HelloOboeEngine()
-        : mLatencyCallback(std::make_shared<LatencyTuningCallback>()),
-        mErrorCallback(std::make_shared<DefaultErrorCallback>(*this)) {
+double now_ms() {
+    struct timespec res;
+    clock_gettime(CLOCK_MONOTONIC, &res);
+    return 1000.0 * res.tv_sec + (double) res.tv_nsec / 1e6;
 }
 
-double HelloOboeEngine::getCurrentOutputLatencyMillis() {
-    if (!mIsLatencyDetectionSupported) return -1.0;
-
-    std::lock_guard<std::mutex> lock(mLock);
-    if (!mStream) return -1.0;
-
-    oboe::ResultWithValue<double> latencyResult = mStream->calculateLatencyMillis();
-    if (latencyResult) {
-        return latencyResult.value();
-    } else {
-        LOGE("Error calculating latency: %s", oboe::convertToText(latencyResult.error()));
-        return -1.0;
-    }
+HelloOboeEngine::HelloOboeEngine() {
 }
 
-void HelloOboeEngine::setBufferSizeInBursts(int32_t numBursts) {
-    std::lock_guard<std::mutex> lock(mLock);
-    if (!mStream) return;
-
-    mLatencyCallback->setBufferTuneEnabled(numBursts == kBufferSizeAutomatic);
-    auto result = mStream->setBufferSizeInFrames(
-            numBursts * mStream->getFramesPerBurst());
-    if (result) {
-        LOGD("Buffer size successfully changed to %d", result.value());
-    } else {
-        LOGW("Buffer size could not be changed, %d", result.error());
-    }
-}
-
-bool HelloOboeEngine::isLatencyDetectionSupported() {
-    return mIsLatencyDetectionSupported;
-}
-
-bool HelloOboeEngine::isAAudioRecommended() {
-    return oboe::AudioStreamBuilder::isAAudioRecommended();
-}
-
-void HelloOboeEngine::tap(bool isDown) {
-    if (mAudioSource) {
-        mAudioSource->tap(isDown);
-    }
+void HelloOboeEngine::runLoopbackTest() {
+    thresholdTime = now_ms() + 500.0;
+    inputRecordThread = std::thread([=]() {
+        unlink("/storage/emulated/0/Download/tom/oboe.pcm");
+        FILE *debugFile = fopen("/storage/emulated/0/Download/tom/oboe.pcm", "wb");
+        int framesRead = 0;
+        while (true) {
+            auto buffer = new int16_t[256];
+            memset(buffer, 0, 256 * 2);
+            mInputStream->read(buffer, 256, 10'000'000).value();
+            fwrite(buffer, sizeof(int16_t), 256, debugFile);
+            framesRead += 256;
+            delete[] buffer;
+            if (framesRead > 44100 * 2) {
+                break;
+            }
+        }
+        fclose(debugFile);
+    });
+    inputRecordThread.join();
+    __android_log_print(
+            ANDROID_LOG_INFO,
+            "TOM",
+            "Output: %f %lld Input: %f %lld",
+            mOutputStream->calculateLatencyMillis().value(),
+            mOutputStream->getFramesWritten(),
+            mInputStream->calculateLatencyMillis().value(),
+            mInputStream->getFramesRead()
+            );
 }
 
 oboe::Result HelloOboeEngine::openPlaybackStream() {
     oboe::AudioStreamBuilder builder;
-    oboe::Result result = builder.setSharingMode(oboe::SharingMode::Exclusive)
+    outputDataCallback = std::make_shared<OutputDataCallback>(this);
+    oboe::Result result = builder.setDirection(oboe::Direction::Output)
+        ->setSharingMode(oboe::SharingMode::Exclusive)
+        ->setAudioApi(oboe::AudioApi::AAudio)
         ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
         ->setFormat(oboe::AudioFormat::Float)
-        ->setFormatConversionAllowed(true)
-        ->setDataCallback(mLatencyCallback)
-        ->setErrorCallback(mErrorCallback)
-        ->setAudioApi(mAudioApi)
-        ->setChannelCount(mChannelCount)
-        ->setDeviceId(mDeviceId)
-        ->openStream(mStream);
-    if (result == oboe::Result::OK) {
-        mChannelCount = mStream->getChannelCount();
-    }
+        ->setChannelCount(oboe::ChannelCount::Stereo)
+        ->setSampleRate(48000)
+        ->setDeviceId(mOutputDeviceId)
+        ->setDataCallback(outputDataCallback)
+        ->openStream(mOutputStream);
+    mOutputStream->setBufferSizeInFrames(mOutputStream->getFramesPerBurst());
     return result;
 }
 
-void HelloOboeEngine::restart() {
-    // The stream will have already been closed by the error callback.
-    mLatencyCallback->reset();
-    start();
+oboe::Result HelloOboeEngine::openRecordingStream() {
+    oboe::AudioStreamBuilder builder;
+    oboe::Result result = builder.setDirection(oboe::Direction::Input)
+            ->setSharingMode(oboe::SharingMode::Exclusive)
+            ->setAudioApi(oboe::AudioApi::AAudio)
+            ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
+            ->setFormat(oboe::AudioFormat::I16)
+            ->setChannelCount(oboe::ChannelCount::Mono)
+            ->setSampleRate(44100)
+            ->setDeviceId(mInputDeviceId)
+            ->setInputPreset(oboe::InputPreset::Generic)
+            ->setSampleRateConversionQuality(oboe::SampleRateConversionQuality::Fastest) // SUPER IMPORTANT TO BE SET!!! THIS IS NOT INCLUDED IN LATENCY MEASUREMENTS BUT ADDS SIGNIFICANT PROCESSING TIME!!!
+            ->openStream(mInputStream);
+    return result;
 }
 
-oboe::Result HelloOboeEngine::start(oboe::AudioApi audioApi, int deviceId, int channelCount) {
-    mAudioApi = audioApi;
-    mDeviceId = deviceId;
-    mChannelCount = channelCount;
+oboe::Result HelloOboeEngine::start(int outputDeviceId, int inputDeviceId) {
+    mOutputDeviceId = outputDeviceId;
+    mInputDeviceId = inputDeviceId;
     return start();
 }
 
 oboe::Result HelloOboeEngine::start() {
     std::lock_guard<std::mutex> lock(mLock);
-    oboe::Result result = oboe::Result::OK;
-    // It is possible for a stream's device to become disconnected during the open or between
-    // the Open and the Start.
-    // So if it fails to start, close the old stream and try again.
-    int tryCount = 0;
-    do {
-        if (tryCount > 0) {
-            usleep(20 * 1000); // Sleep between tries to give the system time to settle.
-        }
-        mIsLatencyDetectionSupported = false;
-        result = openPlaybackStream();
-        if (result == oboe::Result::OK) {
-            mAudioSource = std::make_shared<SoundGenerator>(mStream->getSampleRate(),
-                                                            mStream->getChannelCount());
-            mLatencyCallback->setSource(
-                    std::dynamic_pointer_cast<IRenderableAudio>(mAudioSource));
-
-            LOGD("Stream opened: AudioAPI = %d, channelCount = %d, deviceID = %d",
-                 mStream->getAudioApi(),
-                 mStream->getChannelCount(),
-                 mStream->getDeviceId());
-
-            result = mStream->requestStart();
-            if (result != oboe::Result::OK) {
-                LOGE("Error starting playback stream. Error: %s", oboe::convertToText(result));
-                mStream->close();
-                mStream.reset();
-            } else {
-                mIsLatencyDetectionSupported = (mStream->getTimestamp((CLOCK_MONOTONIC)) !=
-                                                oboe::Result::ErrorUnimplemented);
-            }
-        } else {
-            LOGE("Error creating playback stream. Error: %s", oboe::convertToText(result));
-        }
-    } while (result != oboe::Result::OK && tryCount++ < 3);
-    return result;
+    openPlaybackStream();
+    mOutputStream->requestStart();
+    openRecordingStream();
+    mInputStream->requestStart();
+    return oboe::Result::OK;
 }
 
 oboe::Result HelloOboeEngine::stop() {
-    oboe::Result result = oboe::Result::OK;
     // Stop, close and delete in case not already closed.
     std::lock_guard<std::mutex> lock(mLock);
-    if (mStream) {
-        result = mStream->stop();
-        mStream->close();
-        mStream.reset();
+    if (mOutputStream) {
+        mOutputStream->stop();
+        mOutputStream->close();
+        mOutputStream.reset();
     }
-    return result;
+    if (mInputStream) {
+        mInputStream->stop();
+        mInputStream->close();
+        mInputStream.reset();
+    }
+    return oboe::Result::OK;
 }
 
-oboe::Result HelloOboeEngine::reopenStream() {
-    if (mStream) {
-        stop();
-        return start();
-    } else {
-        return oboe::Result::OK;
+HelloOboeEngine::OutputDataCallback::OutputDataCallback(HelloOboeEngine *engine) {
+    this->mEngine = engine;
+}
+
+oboe::DataCallbackResult
+HelloOboeEngine::OutputDataCallback::onAudioReady(oboe::AudioStream *audioStream, void *audioData,
+                                                  int32_t numFrames) {
+    float *buffer = static_cast<float*>(audioData);
+    auto now = (double) (audioStream->getTimestamp(CLOCK_MONOTONIC).value().timestamp / 1'000'000LL);
+    auto thresholdTimeDeltaMs = now - mEngine->thresholdTime;
+    for (int i = 0; i < numFrames; i++) {
+        auto relativeSampleTimeDeltaMs = (int64_t) (thresholdTimeDeltaMs + ((double) i / 48000.0) * 1000.0);
+        if (relativeSampleTimeDeltaMs > 0.0 && relativeSampleTimeDeltaMs < 1000.0) {
+            float noise = (float) ((drand48() - 0.5) * 0.6);
+            buffer[i * 2] = noise;
+            buffer[i * 2 + 1] = noise;
+        }
+        else {
+            buffer[i * 2] = 0.0;
+            buffer[i * 2 + 1] = 0.0;
+        }
     }
+    return oboe::DataCallbackResult::Continue;
 }

@@ -28,8 +28,8 @@ JNIEXPORT jint JNICALL
 Java_com_google_oboe_samples_hellooboe_PlaybackEngine_startEngine(
         JNIEnv *env,
         jclass,
-        int audioApi, int deviceId, int channelCount) {
-    return static_cast<jint>(sEngine.start((oboe::AudioApi)audioApi, deviceId, channelCount));
+        jint outputDeviceId, jint inputDeviceId) {
+    return static_cast<jint>(sEngine.start(outputDeviceId, inputDeviceId));
 }
 
 JNIEXPORT jint JNICALL
@@ -39,52 +39,9 @@ Java_com_google_oboe_samples_hellooboe_PlaybackEngine_stopEngine(
     return static_cast<jint>(sEngine.stop());
 }
 
-JNIEXPORT void JNICALL
-Java_com_google_oboe_samples_hellooboe_PlaybackEngine_setToneOn(
-        JNIEnv *env,
-        jclass,
-        jboolean isToneOn) {
-
-    sEngine.tap(isToneOn);
-}
-
 
 JNIEXPORT void JNICALL
-Java_com_google_oboe_samples_hellooboe_PlaybackEngine_setBufferSizeInBursts(
-        JNIEnv *env,
-        jclass,
-        jint bufferSizeInBursts) {
-    sEngine.setBufferSizeInBursts(bufferSizeInBursts);
-}
-
-JNIEXPORT jdouble JNICALL
-Java_com_google_oboe_samples_hellooboe_PlaybackEngine_getCurrentOutputLatencyMillis(
-        JNIEnv *env,
-        jclass) {
-    return static_cast<jdouble>(sEngine.getCurrentOutputLatencyMillis());
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_google_oboe_samples_hellooboe_PlaybackEngine_isLatencyDetectionSupported(
-        JNIEnv *env,
-        jclass) {
-    return (sEngine.isLatencyDetectionSupported() ? JNI_TRUE : JNI_FALSE);
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_google_oboe_samples_hellooboe_PlaybackEngine_isAAudioRecommended(
-        JNIEnv *env,
-        jclass) {
-    return (sEngine.isAAudioRecommended() ? JNI_TRUE : JNI_FALSE);
-}
-
-JNIEXPORT void JNICALL
-Java_com_google_oboe_samples_hellooboe_PlaybackEngine_setDefaultStreamValues(
-        JNIEnv *env,
-        jclass,
-        jint sampleRate,
-        jint framesPerBurst) {
-    oboe::DefaultStreamValues::SampleRate = (int32_t) sampleRate;
-    oboe::DefaultStreamValues::FramesPerBurst = (int32_t) framesPerBurst;
+Java_com_google_oboe_samples_hellooboe_PlaybackEngine_runLoopbackTest(JNIEnv *env, jclass clazz) {
+    return sEngine.runLoopbackTest();
 }
 } // extern "C"
