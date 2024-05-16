@@ -40,9 +40,8 @@ void HelloOboeEngine::runLoopbackTest()
     FILE *debugFile = fopen(audioPath.c_str(), "wb");
     auto inputStreamADCLatency = mInputStream->calculateLatencyMillis().value();
     auto outputStreamDACLatency = mOutputStream->calculateLatencyMillis().value();
-    auto outputStreamBufferLatency = ((double)mOutputStream->getBufferCapacityInFrames() / (double)mOutputStream->getSampleRate()) * 1000.0;
-    auto latencyCompensationMs = outputStreamDACLatency + outputStreamBufferLatency + inputStreamADCLatency;
-    thresholdTime = now_ms() + 500.0 - latencyCompensationMs;
+    auto deltaMs = 500.0;
+    thresholdTime = now_ms() + deltaMs - inputStreamADCLatency - outputStreamDACLatency;
     inputRecordThread = std::thread([=](){
         int fr = 0;
         do {
@@ -54,14 +53,18 @@ void HelloOboeEngine::runLoopbackTest()
             auto buffer = new int16_t[256];
             memset(buffer, 0, 256 * 2);
             mInputStream->read(buffer, 256, 10'000'000).value();
-            fwrite(buffer, sizeof(int16_t), 256, debugFile);
+            if (debugFile != NULL) {
+                fwrite(buffer, sizeof(int16_t), 256, debugFile);
+            }
             framesRead += 256;
             delete[] buffer;
             if (framesRead > 44100 * 2) {
                 break;
             }
         }
-        fclose(debugFile);
+        if (debugFile != NULL) {
+            fclose(debugFile);
+        }
     });
     inputRecordThread.join();
 }
@@ -96,6 +99,7 @@ oboe::Result HelloOboeEngine::openRecordingStream()
       ->setSampleRate(44100)
       ->setDeviceId(mInputDeviceId)
       ->setInputPreset(oboe::InputPreset::Generic)
+      ->setFormatConversionAllowed(true)
       ->setSampleRateConversionQuality(oboe::SampleRateConversionQuality::Fastest) // SUPER IMPORTANT TO BE SET!!! THIS IS NOT INCLUDED IN LATENCY MEASUREMENTS BUT ADDS SIGNIFICANT PROCESSING TIME!!!
       ->openStream(mInputStream);
     return result;
@@ -147,8 +151,7 @@ HelloOboeEngine::OutputDataCallback::onAudioReady(oboe::AudioStream *audioStream
                                                   int32_t numFrames)
 {
     float *buffer = static_cast<float *>(audioData);
-    auto now = (double)(audioStream->getTimestamp(CLOCK_MONOTONIC).value().timestamp / 1'000'000LL);
-    auto thresholdTimeDeltaMs = now - mEngine->thresholdTime;
+    auto thresholdTimeDeltaMs = now_ms() - mEngine->thresholdTime;
     for (int i = 0; i < numFrames; i++)
     {
         auto relativeSampleTimeDeltaMs = (int64_t)(thresholdTimeDeltaMs + ((double)i / 48000.0) * 1000.0);
