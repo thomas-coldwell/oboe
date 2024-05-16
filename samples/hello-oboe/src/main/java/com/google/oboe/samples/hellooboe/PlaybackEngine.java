@@ -27,7 +27,7 @@ public class PlaybackEngine {
 
 
     // Native methods that require audioserver calls and might take several seconds.
-    static native int startEngine(int outputDeviceId, int inputDeviceId);
+    static native int startEngine(int outputDeviceId, int inputDeviceId, String filesDirectory);
     static native int stopEngine();
 
     // Native methods that only talk to the native client code.

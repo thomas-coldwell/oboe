@@ -16,24 +16,28 @@
 
 package com.google.oboe.samples.hellooboe;
 
-import static android.app.PendingIntent.getActivity;
 
 import android.Manifest;
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
+import android.media.MediaScannerConnection;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 
 import androidx.annotation.RequiresApi;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.provider.MediaStore;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
@@ -47,6 +51,8 @@ import android.widget.Toast;
 import com.google.oboe.samples.audio_device.AudioDeviceListEntry;
 import com.google.oboe.samples.audio_device.AudioDeviceSpinner;
 
+import java.io.File;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -76,7 +82,19 @@ public class MainActivity extends Activity {
         }
         didPress = true;
         audioThread.execute(PlaybackEngine::runLoopbackTest);
-        handler.postDelayed(() -> didPress = false, 1000);
+        handler.postDelayed(() -> {
+            didPress = false;
+            File filesDirectory = getApplicationContext().getFilesDir();
+            String path = filesDirectory.getPath() + "/test.pcm";
+            File file = new File(path);
+            Uri uri = FileProvider.getUriForFile(getApplicationContext(), BuildConfig.APPLICATION_ID + ".provider", file);
+            Intent sendIntent = new Intent();
+            sendIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            sendIntent.setAction(Intent.ACTION_SEND);
+            sendIntent.putExtra(Intent.EXTRA_STREAM, uri);
+            sendIntent.setType("audio/*");
+            startActivity(Intent.createChooser(sendIntent, null));
+        }, 2500);
         return true;
     }
 
@@ -85,7 +103,21 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.RECORD_AUDIO}, 1);
         setContentView(R.layout.activity_main);
-        audioThread.execute(() -> PlaybackEngine.startEngine(outputDeviceId, inputDeviceId));
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            AudioManager audioManager = (AudioManager)getSystemService(Context.AUDIO_SERVICE);
+            AudioDeviceInfo[] inputDevices = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS);
+            for (AudioDeviceInfo device : inputDevices) {
+                if (inputDeviceId == 0 && device.getType() == AudioDeviceInfo.TYPE_BUILTIN_MIC) {
+                    Log.i("TOM", String.valueOf(device.getId()));
+                    inputDeviceId = device.getId();
+                }
+            }
+        }
+
+        File filesDirectory = getApplicationContext().getFilesDir();
+
+        audioThread.execute(() -> PlaybackEngine.startEngine(outputDeviceId, inputDeviceId, filesDirectory.getPath()));
     }
 
     @Override

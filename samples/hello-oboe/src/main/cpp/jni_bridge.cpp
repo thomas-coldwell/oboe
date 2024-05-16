@@ -28,7 +28,9 @@ JNIEXPORT jint JNICALL
 Java_com_google_oboe_samples_hellooboe_PlaybackEngine_startEngine(
         JNIEnv *env,
         jclass,
-        jint outputDeviceId, jint inputDeviceId) {
+        jint outputDeviceId, jint inputDeviceId, jstring filesDir) {
+    const char *path = env->GetStringUTFChars(filesDir, NULL);
+    sEngine.filesDir = std::string(path);
     return static_cast<jint>(sEngine.start(outputDeviceId, inputDeviceId));
 }
 

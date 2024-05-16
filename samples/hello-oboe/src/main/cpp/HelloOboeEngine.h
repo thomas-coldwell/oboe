@@ -33,6 +33,7 @@ public:
 
 public:
     std::atomic<double> thresholdTime = 0.0;
+    std::string filesDir;
 
 private:
     class OutputDataCallback: public oboe::AudioStreamDataCallback {
